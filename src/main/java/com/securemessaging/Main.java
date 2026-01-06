@@ -12,92 +12,95 @@ import java.util.concurrent.Executors;
 
 
 public class Main {
-    private static final int DEFAULT_PORT = 12345;
-    private static final String DEFAULT_HOST = "localhost";
+    private static final int DEFAULT_PORT = 12345;                                            //Default network port
+    private static final String DEFAULT_HOST = "localhost";                                   //Default server host
 
     public static void main(String[] args) {
-        Scanner scanner = new Scanner(System.in);
+        Scanner scanner = new Scanner(System.in);                                             //Scanner for console input
 
-        System.out.println("Run as (S)erver or (C)lient?");
-        String mode = scanner.nextLine().toUpperCase();
+        System.out.println("Run as (S)erver or (C)lient?");                                   //user chooses mode
+        String mode = scanner.nextLine().toUpperCase();                                       //Read and normalize input
 
-        int port = DEFAULT_PORT;
-        String host = DEFAULT_HOST;
-        if (mode.equals("C")){
-            System.out.println("Enter host (default: localhost): ");
-            String inputHost = scanner.nextLine();
-            if (!inputHost.isEmpty()) host = inputHost;
+        int port = DEFAULT_PORT;                                                              //initialize port with default
+        String host = DEFAULT_HOST;                                                           //initialize host with default
+
+        if (mode.equals("C")){                                                                //If running as (C)lient
+            System.out.println("Enter host (default: localhost): ");                          //Enter server address
+            String inputHost = scanner.nextLine();                                            //Read host input
+            if (!inputHost.isEmpty()) host = inputHost;                                       //Override default if given
         }
-        System.out.println("Enter port (default: 12345): ");
-        String inputPort = scanner.nextLine();
-        if (!inputPort.isEmpty()) port = Integer.parseInt(inputPort);
 
-        System.out.println("Enter master password for message storage: ");
-        String password = scanner.nextLine();
+        System.out.println("Enter port (default: 12345): ");                                  //Enter port number
+        String inputPort = scanner.nextLine();                                                //Read port input
+        if (!inputPort.isEmpty())                                                             //If user entered a port
+            port = Integer.parseInt(inputPort);                                               //change string to int
+
+        System.out.println("Enter master password for message storage: ");                    //Enter encryption password
+        String password = scanner.nextLine();                                                 //Read password
 
         try {
-            SessionManager sessionManager = new SessionManager();
-            SocketCommunicator communicator = new SocketCommunicator();
-            Obfuscator obfuscator = new Obfuscator();
-            MessageStore messageStore = new MessageStore(password);
-            ChatGUI gui = new ChatGUI();
+            SessionManager sessionManager = new SessionManager();                             //handles secure key exchange
+            SocketCommunicator communicator = new SocketCommunicator();                       //Manage socket communication
+            Obfuscator obfuscator = new Obfuscator();                                         //Generates dummy traffic
+            MessageStore messageStore = new MessageStore(password);                           //Encrypts stored messages
+            ChatGUI gui = new ChatGUI();                                                      //the chat GUI
 
-            javax.swing.SwingUtilities.invokeLater(() -> gui.setVisible(true));
+            javax.swing.SwingUtilities.invokeLater(() -> gui.setVisible(true));               //run gui and display chat window
 
-            if (mode.equals("S")) {
-                communicator.startServer(port);
-                System.out.println("Server started. Waiting for connection...");
-            } else {
-                communicator.connectToServer(host, port);
-                System.out.println("Connected to server.");
+            if (mode.equals("S")) {                                                           //If running as (S)erver
+                communicator.startServer(port);                                               //start listening for clients
+                System.out.println("Server started. Waiting for connection...");              //print that server has started
+            } else {                                                                          //else client mode
+                communicator.connectToServer(host, port);                                     //Connect to the server
+                System.out.println("Connected to server.");                                   //print connected to server
             }
 
-            sessionManager.performKeyExchange(communicator);
-            sessionManager.startKeyRefresh(communicator);
-            obfuscator.startDummyTraffic(communicator);
+            sessionManager.performKeyExchange(communicator);                                  //Key exchange
+            sessionManager.startKeyRefresh(communicator);                                     //Periodically refresh the key
+            obfuscator.startDummyTraffic(communicator);                                       //hide real traffic with dummy traffic
 
-            ExecutorService executor = Executors.newCachedThreadPool();
+            ExecutorService executor = Executors.newCachedThreadPool();                       //Thread pool for async tasks, prevents leaks
 
-            executor.submit(() -> {
-                while (true) {
+            executor.submit(() -> {                                                           //background threat for receiving messages
+                while (true) {                                                                //Keep listening continuously
                     try {
-                        String receivedPacket = communicator.receivePacket();
-                        if (receivedPacket.startsWith("DUMMY:")) continue;
-                        String decrypted = MessageEncryptor.decryptMessage(receivedPacket, sessionManager.getSharedAESKey());
-                        messageStore.storeMessage("Peer: " + decrypted);
-                        gui.receiveMessage(decrypted);
-                    } catch (Exception e) {
-                        e.printStackTrace();
-                        break;
+                        String receivedPacket = communicator.receivePacket();                 //Read incoming data
+                        if (receivedPacket.startsWith("DUMMY:")) continue;                    //ignore dummy traffic
+                        String decrypted = MessageEncryptor.decryptMessage(receivedPacket, sessionManager.getSharedAESKey()); //decrypt the real message
+                        messageStore.storeMessage("Peer: " + decrypted);                      //Store the message encrypted
+                        gui.receiveMessage(decrypted);                                        //the gui display the message
+                    } catch (Exception e) {                                                   //Handle error for network/crypto
+                        e.printStackTrace();                                                  //Print error for debugging
+                        break;                                                                //exit loop
                     }
                 }
             });
 
-            System.out.println("Type messages to send (type 'exit' to quit):");
-            while (true) {
-                String message = scanner.nextLine();
-                if ("exit".equalsIgnoreCase(message)) break;
+            System.out.println("Type messages to send (type 'exit' to quit):");               //instructions for exiting
+            while (true) {                                                                    //Loop for sending messages
+                String message = scanner.nextLine();                                          //Read user's messages
+                if ("exit".equalsIgnoreCase(message)) break;                                  //if user type exit to quit
 
-                String encrypted = MessageEncryptor.encryptMessage(message, sessionManager.getSharedAESKey());
-                messageStore.storeMessage("You: " + message);
-                obfuscator.addTimingJitter(() -> {
+                String encrypted = MessageEncryptor.encryptMessage(message, sessionManager.getSharedAESKey());  //Encrypt message before sending
+                messageStore.storeMessage("You: " + message);                                 //Store message
+                obfuscator.addTimingJitter(() -> {                                            //Add random delay for security
                     try {
-                        communicator.sendPacket(encrypted);
-                    } catch (Exception e) {
-                        e.printStackTrace();
+                        communicator.sendPacket(encrypted);                                   //Send encrypted message
+                    } catch (Exception e) {                                                   //Handle send errors
+                        e.printStackTrace();                                                  //print error
                     }
                 });
             }
 
-            executor.shutdown();
-            obfuscator.shutdown();
-            sessionManager.shutdown();
-            communicator.close();
+            executor.shutdown();                                                              //Stop background threads
+            obfuscator.shutdown();                                                            //Stop dummy traffic
+            sessionManager.shutdown();                                                        //Clean up crypto resource
+            communicator.close();                                                             //close connection
 
-        } catch (Exception e) {
-            e.printStackTrace();
+        } catch (Exception e) {                                                               //catch unexpected errors
+            e.printStackTrace();                                                              //Print error details
         } finally {
-            scanner.close();
+            scanner.close();                                                                  //Release input
         }
     }
 
